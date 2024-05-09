@@ -481,6 +481,13 @@ defmodule Instructor do
     end
   end
 
+  defp parse_response_for_mode(:md_json, %{"choices" => [%{"message" => %{"content" => [%{"text" => text}]}}]}) do
+    text
+    |> String.trim()
+    |> String.trim_trailing("```")
+    |> Jason.decode()
+  end
+
   defp parse_response_for_mode(:md_json, %{"choices" => [%{"message" => %{"content" => content}}]}),
        do: Jason.decode(content)
 

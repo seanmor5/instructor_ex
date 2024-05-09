@@ -27,7 +27,11 @@ defmodule Instructor.Adapters.Anthropic do
     options =
       Keyword.merge(http_options(config),
         json: params,
-        headers: [{"x-api-key", api_key(config)}, {"anthropic-version", " 2023-06-01"}]
+        headers: [
+          {"x-api-key", api_key(config)},
+          {"anthropic-beta", "tools-2024-04-04"},
+          {"anthropic-version", " 2023-06-01"}
+        ]
       )
 
     response = Req.post!(url(config), options)
