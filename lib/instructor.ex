@@ -454,18 +454,7 @@ defmodule Instructor do
             params
             |> Keyword.put(:max_retries, max_retries - 1)
             |> Keyword.update(:messages, [], fn messages ->
-              messages ++
-                echo_response(response) ++
-                [
-                  %{
-                    role: "system",
-                    content: """
-                    The response did not pass validation. Please try again and fix the following validation errors:\n
-
-                    #{errors}
-                    """
-                  }
-                ]
+              messages ++ echo_response(response) ++ retry_message(errors, config)
             end)
 
           do_chat_completion(response_model, params, config)
@@ -481,7 +470,9 @@ defmodule Instructor do
     end
   end
 
-  defp parse_response_for_mode(:md_json, %{"choices" => [%{"message" => %{"content" => [%{"text" => text}]}}]}) do
+  defp parse_response_for_mode(:md_json, %{
+         "choices" => [%{"message" => %{"content" => [%{"text" => text}]}}]
+       }) do
     text
     |> String.trim()
     |> String.trim_trailing("```")
@@ -494,8 +485,19 @@ defmodule Instructor do
   defp parse_response_for_mode(:json, %{"choices" => [%{"message" => %{"content" => content}}]}),
     do: Jason.decode(content)
 
-  defp parse_response_for_mode(:tools, %{"choices" => [%{"message" => %{"content" => [%{"input" => args}]}}]}) do
-    args    
+  defp parse_response_for_mode(:json, %{
+         "choices" => [%{"message" => %{"content" => [%{"text" => text}]}}]
+       }) do
+    text
+    |> String.trim()
+    |> String.trim_trailing("```")
+    |> Jason.decode()
+  end
+
+  defp parse_response_for_mode(:tools, %{
+         "choices" => [%{"message" => %{"content" => [%{"input" => args}]}}]
+       }) do
+    args
   end
 
   defp parse_response_for_mode(:tools, %{
@@ -520,6 +522,16 @@ defmodule Instructor do
 
   defp parse_stream_chunk_for_mode(_, %{"choices" => [%{"finish_reason" => "stop"}]}), do: ""
 
+  defp echo_response(%{"choices" => [%{"message" => %{"content" => [%{"text" => text}]}}]}) do
+    [%{role: "assistant", content: text}]
+  end
+
+  defp echo_response(%{
+         "choices" => [%{"message" => %{"content" => [%{"type" => "tool_use"} = tool]}}]
+       }) do
+    [%{role: "assistant", content: tool}]
+  end
+
   defp echo_response(%{
          "choices" => [
            %{
@@ -541,6 +553,21 @@ defmodule Instructor do
         tool_call_id: tool_call_id,
         name: name,
         content: args
+      }
+    ]
+  end
+
+  defp retry_message(errors, config) do
+    role = if adapter(config) == Instructor.Adapters.OpenAI, do: "system", else: "user"
+
+    [
+      %{
+        role: role,
+        content: """
+        The response did not pass validation. Please try again and fix the following validation errors:\n
+
+        #{errors}
+        """
       }
     ]
   end
@@ -580,8 +607,6 @@ defmodule Instructor do
         {:md_json, _} ->
           params
 
-        # |> Keyword.put(:stop, "```")
-
         {:json, _} ->
           params
           |> Keyword.put(:response_format, %{
@@ -611,7 +636,8 @@ defmodule Instructor do
           |> Keyword.put(:tools, [
             %{
               name: "Schema",
-              description: "Correctly extracted `Schema` with all the required parameters with correct types",
+              description:
+                "Correctly extracted `Schema` with all the required parameters with correct types",
               input_schema: json_schema |> Jason.decode!()
             }
           ])
@@ -619,9 +645,7 @@ defmodule Instructor do
 
     case adapter do
       Instructor.Adapters.Anthropic ->
-        params
-        |> Keyword.put(:system, sys_message(json_schema, :anthropic).content)
-        |> Keyword.put_new(:max_tokens, 1800)
+        Keyword.put(params, :system, sys_message(json_schema, :anthropic).content)
 
       _ ->
         params
