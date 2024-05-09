@@ -494,6 +494,10 @@ defmodule Instructor do
   defp parse_response_for_mode(:json, %{"choices" => [%{"message" => %{"content" => content}}]}),
     do: Jason.decode(content)
 
+  defp parse_response_for_mode(:tools, %{"choices" => [%{"message" => %{"content" => [%{"input" => args}]}}]}) do
+    args    
+  end
+
   defp parse_response_for_mode(:tools, %{
          "choices" => [
            %{"message" => %{"tool_calls" => [%{"function" => %{"arguments" => args}}]}}
@@ -553,7 +557,7 @@ defmodule Instructor do
               messages
 
             _ ->
-              [sys_message(json_schema) | messages]
+              [sys_message(json_schema, :openai) | messages]
           end
 
         case mode do
@@ -572,19 +576,19 @@ defmodule Instructor do
       end)
 
     params =
-      case mode do
-        :md_json ->
+      case {mode, adapter} do
+        {:md_json, _} ->
           params
 
         # |> Keyword.put(:stop, "```")
 
-        :json ->
+        {:json, _} ->
           params
           |> Keyword.put(:response_format, %{
             type: "json_object"
           })
 
-        :tools ->
+        {:tools, Instructor.Adapters.OpenAI} ->
           params
           |> Keyword.put(:tools, [
             %{
@@ -601,12 +605,22 @@ defmodule Instructor do
             type: "function",
             function: %{name: "Schema"}
           })
+
+        {:tools, Instructor.Adapters.Anthropic} ->
+          params
+          |> Keyword.put(:tools, [
+            %{
+              name: "Schema",
+              description: "Correctly extracted `Schema` with all the required parameters with correct types",
+              input_schema: json_schema |> Jason.decode!()
+            }
+          ])
       end
 
     case adapter do
       Instructor.Adapters.Anthropic ->
         params
-        |> Keyword.put(:system, sys_message(json_schema).content)
+        |> Keyword.put(:system, sys_message(json_schema, :anthropic).content)
         |> Keyword.put_new(:max_tokens, 1800)
 
       _ ->
@@ -614,7 +628,30 @@ defmodule Instructor do
     end
   end
 
-  defp sys_message(json_schema) do
+  defp sys_message(json_schema, :anthropic) do
+    decoded_json_schema = Jason.decode!(json_schema)
+
+    additional_definitions =
+      if defs = decoded_json_schema["$defs"] do
+        "\nHere are some more definitions to adhere too:\n" <> Jason.encode!(defs)
+      else
+        ""
+      end
+
+    %{
+      role: "system",
+      content: """
+      As a genius expert, your task is to understand the content and provide the parsed objects in json that match the following json_schema:
+      #{json_schema}
+
+      #{additional_definitions}
+
+      You absolutely MUST use the tool "Schema" and ONLY the "Schema" tool in your response. Do not include anything but the correct tool call.
+      """
+    }
+  end
+
+  defp sys_message(json_schema, _) do
     decoded_json_schema = Jason.decode!(json_schema)
 
     additional_definitions =
