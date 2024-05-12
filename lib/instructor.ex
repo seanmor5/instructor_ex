@@ -477,10 +477,11 @@ defmodule Instructor do
     |> String.trim()
     |> String.trim_trailing("```")
     |> Jason.decode()
+    |> IO.inspect
   end
 
   defp parse_response_for_mode(:md_json, %{"choices" => [%{"message" => %{"content" => content}}]}),
-       do: Jason.decode(content)
+       do: Jason.decode(content) |> IO.inspect
 
   defp parse_response_for_mode(:json, %{"choices" => [%{"message" => %{"content" => content}}]}),
     do: Jason.decode(content)
@@ -497,7 +498,27 @@ defmodule Instructor do
   defp parse_response_for_mode(:tools, %{
          "choices" => [%{"message" => %{"content" => [%{"input" => args}]}}]
        }) do
-    args
+    {:ok, args}
+  end
+
+  defp parse_response_for_mode(:tools, %{
+         "choices" => [%{"message" => %{"content" => [%{"text" => result}]}}]
+       }) do
+    Jason.decode(result)
+  end
+
+
+  defp parse_response_for_mode(:tools, %{
+         "choices" => [%{"message" => %{"content" => [%{"text" => _} | rest]}}]
+       }) do
+    Enum.find_value(rest, fn
+      %{"message" => %{"content" => [%{"input" => args}]}} -> {:ok, args}
+      _ -> nil
+    end)
+    |> case do
+      nil -> {:error, "Error"}
+      args -> {:ok, args}
+    end
   end
 
   defp parse_response_for_mode(:tools, %{
