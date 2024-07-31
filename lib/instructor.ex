@@ -480,6 +480,13 @@ defmodule Instructor do
     end
   end
 
+  defp parse_response_for_mode(:tgi, %{
+         "choices" => [
+           %{"message" => %{"tool_calls" => [%{"function" => %{"arguments" => args}}]}}
+         ]
+       }),
+       do: {:ok, args}
+
   defp parse_response_for_mode(:md_json, %{"choices" => [%{"message" => %{"content" => content}}]}),
        do: Jason.decode(content)
 
@@ -558,11 +565,14 @@ defmodule Instructor do
           """
         }
 
-        messages = [sys_message | messages]
+        with_sys_prompt = [sys_message | messages]
 
         case mode do
+          :tgi ->
+            messages
+
           :md_json ->
-            messages ++
+            with_sys_prompt ++
               [
                 %{
                   role: "assistant",
@@ -571,7 +581,7 @@ defmodule Instructor do
               ]
 
           _ ->
-            messages
+            with_sys_prompt
         end
       end)
 
@@ -585,7 +595,7 @@ defmodule Instructor do
           type: "json_object"
         })
 
-      :tools ->
+      mode when mode in [:tgi, :tools] ->
         params
         |> Keyword.put(:tools, [
           %{
